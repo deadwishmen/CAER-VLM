@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader, Dataset
 import utils.util as ut 
 from PIL import Image, ImageDraw
 import os
+from transformers import ViltProcessor, ViltModel, ViltConfig
 
 def collate_fn(batch):
     batch = list(filter(lambda x: x is not None, batch))
@@ -14,6 +15,18 @@ import os
 import torch
 from torch.utils.data import Dataset
 from PIL import Image, ImageDraw
+
+def load_vilt_processor(vilt_model_name="dandelin/vilt-b32-mlm", cache_dir=None):
+  try:
+      offline_mode = os.getenv("TRANSFORMERS_OFFLINE", "0") == "1"
+      processor = ViltProcessor.from_pretrained(
+          vilt_model_name, local_files_only=offline_mode, cache_dir=cache_dir
+      )
+      print(f"Loaded ViltProcessor from {vilt_model_name} successfully.")
+      return processor
+  except Exception as e:
+      print(f"ERROR: Failed to load ViltProcessor: {e}")
+      raise
 
 class MyDataset(Dataset):
     """
@@ -26,9 +39,11 @@ class MyDataset(Dataset):
         self.root = root
         self.transform = transform
         self.default_body_size = default_body_size
+
         # Phân tích toàn bộ file và lưu kết quả đã được làm sạch
         self.samples = self._read_and_parse_input_file(input_file)
         if not self.samples:
+          
             print("Cảnh báo: Không có mẫu dữ liệu hợp lệ nào được tải.")
 
     def _read_and_parse_input_file(self, file_path):
@@ -56,13 +71,16 @@ class MyDataset(Dataset):
                 sample_data = {
                     "image_path": parts[0],
                     "label": int(parts[1]),
-                    "coords": [int(p) for p in parts[2:]]
+                    "coords": [int(p) for p in parts[2:9]],
+                    "description": parts[10:]
                 }
                 parsed_samples.append(sample_data)
             except ValueError:
                 print(f"Cảnh báo: Bỏ qua dòng {idx+1} do lỗi chuyển đổi sang số nguyên: '{line}'")
                 continue
-                
+        
+
+
         return parsed_samples
 
     def __len__(self):
@@ -93,8 +111,11 @@ class MyDataset(Dataset):
             draw = ImageDraw.Draw(context)
             draw.rectangle((x1_face, y1_face, x2_face, y2_face), fill=(0, 0, 0))
 
+            text = sample_info["description"]  
+
+
             # 4. Đóng gói và áp dụng transform
-            data_dict = {'face': face, 'body': body, 'context': context}
+            data_dict = {'face': face, 'body': body, 'context': context, 'text': text_emb}
             
             if self.transform:
                 data_dict = self.transform(data_dict)
