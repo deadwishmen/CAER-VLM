@@ -35,10 +35,14 @@ class MyDataset(Dataset):
     - __getitem__ chỉ tập trung vào việc tải và xử lý ảnh, giúp tăng tốc độ.
     - Xử lý lỗi chi tiết và mạnh mẽ hơn.
     """
-    def __init__(self, root, input_file, transform=None, default_body_size=(224, 224)):
+    def __init__(self, root, input_file, transform=None, default_body_size=(224, 224), text_max_len = 256):
         self.root = root
         self.transform = transform
         self.default_body_size = default_body_size
+        self.vilt_processor = load_vilt_processor()
+        self.text_max_len = text_max_len
+        
+
 
         # Phân tích toàn bộ file và lưu kết quả đã được làm sạch
         self.samples = self._read_and_parse_input_file(input_file)
@@ -60,19 +64,30 @@ class MyDataset(Dataset):
             line = line.strip()
             if not line:
                 continue
-            
+
             parts = line.split(',')
-            if len(parts) != 10:
-                print(f"Cảnh báo: Bỏ qua dòng {idx+1} do sai định dạng (số cột không phải 10): '{line}'")
-                continue
-            
+
+            coords = []
+            for p in parts[2:9]:
+                p = p.strip()
+                if not p:
+                    print(f"Cảnh báo: Bỏ qua dòng {idx+1} do giá trị coords rỗng: '{line}'")
+                    coords.append(int(p))
+
+
+            description_parts = parts[10:]
+            description = [p.strip() for p in description_parts if p.strip()]
+            if description and description[0].startswith("ASSISTANT:"):
+              description[0] = description[0][len("ASSISTANT:"):].strip()
+              # Loại bỏ phần tử rỗng sau khi bỏ "ASSISTANT:" nếu cần
+              description = [p for p in description if p]
             try:
                 # Đóng gói dữ liệu đã phân tích thành một dictionary
                 sample_data = {
                     "image_path": parts[0],
                     "label": int(parts[1]),
-                    "coords": [int(p) for p in parts[2:9]],
-                    "description": parts[10:]
+                    "coords": coords,
+                    "description": description
                 }
                 parsed_samples.append(sample_data)
             except ValueError:
@@ -90,6 +105,8 @@ class MyDataset(Dataset):
         # Lấy thông tin đã được phân tích sẵn
         sample_info = self.samples[idx]
         
+
+
         try:
             # 1. Tải ảnh
             full_path = os.path.join(self.root, sample_info["image_path"])
@@ -114,8 +131,25 @@ class MyDataset(Dataset):
             text = sample_info["description"]  
 
 
+            inputs_context = self.processor(
+                images=context, text=text, return_tensors="pt",
+                padding="max_length", truncation=True, max_length=self.text_max_len
+            )
+
+            inputs_face = self.processor(
+                images=face, text=text, return_tensors="pt",
+                padding="max_length", truncation=True, max_length=self.text_max_len
+            )
+            
+
             # 4. Đóng gói và áp dụng transform
-            data_dict = {'face': face, 'body': body, 'context': context, 'text': text_emb}
+            data_dict = {'input_ids': inputs_context['input_ids'].squeeze(0),
+                        'attention_mask': inputs_context['attention_mask'].squeeze(0),
+                        'token_type_ids': inputs_context['token_type_ids'].squeeze(0),
+                        'pixel_values_context': inputs_context['pixel_values'].squeeze(0),
+                        'token_type_ids_context': inputs_context['token_type_ids'].squeeze(0),
+                        'pixel_values_face': inputs_face['pixel_values'].squeeze(0),
+                        'token_type_ids_face': inputs_face['token_type_ids'].squeeze(0)}
             
             if self.transform:
                 data_dict = self.transform(data_dict)
@@ -139,6 +173,6 @@ class CAERSDataLoader(BaseDataLoader):
             - detect_file (str): file containing results from detector 
         """
         
-        data_transforms = ut.get_transform(train)
-        self.dataset = MyDataset(root, detect_file, data_transforms)
+        # data_transforms = ut.get_transform(train)
+        self.dataset = MyDataset(root, detect_file, transform=None)
         super().__init__(self.dataset, batch_size, shuffle, validation_split=0.0, num_workers=num_workers, collate_fn=collate_fn)
