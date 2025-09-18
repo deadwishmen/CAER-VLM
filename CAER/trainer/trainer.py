@@ -3,11 +3,12 @@ import torch
 from torchvision.utils import make_grid
 from base import BaseTrainer
 from utils import inf_loop, MetricTracker
-import time 
+import time
+from torchvision import transforms
 
 class Trainer(BaseTrainer):
     """
-    Trainer class
+    Trainer class for models using ViltProcessor inputs
     """
     def __init__(self, model, criterion, metric_ftns, optimizer, config, data_loader,
                  valid_data_loader=None, lr_scheduler=None, len_epoch=None):
@@ -39,19 +40,40 @@ class Trainer(BaseTrainer):
         start_epoch = time.time()
         self.model.train()
         self.train_metrics.reset()
-        # print("Learning rate:", self.lr_scheduler.get_lr())
+        
         for batch_idx, (inputs, labels) in enumerate(self.data_loader):
-            # debugging
-            # print('Classes: ', torch.unique(labels))
-            face, body, context = inputs['face'].to(self.device), inputs['body'].to(self.device), inputs['context'].to(self.device)
+            if inputs is None:  # Bỏ qua batch rỗng
+                continue
+
+            # Chuyển các tensor từ ViltProcessor sang device
+            input_ids = inputs['input_ids'].to(self.device)
+            attention_mask = inputs['attention_mask'].to(self.device)
+            token_type_ids = inputs['token_type_ids'].to(self.device)
+
+            pixel_values_face = inputs['pixel_values_face'].to(self.device)
+            pixel_values_context = inputs['pixel_values_context'].to(self.device)
+
+
             labels = labels.to(self.device)
-            
+
+            # Lấy ảnh PIL (list) để trực quan hóa
+            face_imgs = inputs.get('face')  # List of PIL images
+            body_imgs = inputs.get('body')
+            context_imgs = inputs.get('context')
+
             self.optimizer.zero_grad()
-            output = self.model(face, body, context)
+            # Gọi mô hình với các tensor từ ViltProcessor
+            output = self.model(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            pixel_values_context=pixel_values_context,
+                            pixel_values_face=pixel_values_face
+            )
             loss = self.criterion(output, labels)
             loss.backward()
             self.optimizer.step()
-            
+
             self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
             self.train_metrics.update('loss', loss.item())
             for met in self.metric_ftns:
@@ -62,27 +84,35 @@ class Trainer(BaseTrainer):
                     epoch,
                     self._progress(batch_idx),
                     loss.item()))
-                self.writer.add_image('face', make_grid(face.cpu(), nrow=4, normalize=True))
-                self.writer.add_image('body', make_grid(body.cpu(), nrow=4, normalize=True))
-                self.writer.add_image('context', make_grid(context.cpu(), nrow=2, normalize=True))
+                # Ghi ảnh vào TensorBoard nếu có
+                # if face_imgs:
+                #     face_tensors = [transforms.ToTensor()(img) for img in face_imgs]
+                #     self.writer.add_image('face', make_grid(face_tensors, nrow=4, normalize=True))
+                # if body_imgs:
+                #     body_tensors = [transforms.ToTensor()(img) for img in body_imgs]
+                #     self.writer.add_image('body', make_grid(body_tensors, nrow=4, normalize=True))
+                # if context_imgs:
+                #     context_tensors = [transforms.ToTensor()(img) for img in context_imgs]
+                #     self.writer.add_image('context', make_grid(context_tensors, nrow=2, normalize=True))
 
                 for name, p in self.model.named_parameters():
                     if p.requires_grad and p.grad is not None:
                         self.writer.add_histogram('grad_' + name, p.grad, bins='auto')
-                        
+
             if batch_idx == self.len_epoch:
                 break
+
         log = self.train_metrics.result()
 
         if self.do_validation:
             val_log = self._valid_epoch(epoch)
-            log.update(**{'val_'+k : v for k, v in val_log.items()})
+            log.update(**{'val_' + k: v for k, v in val_log.items()})
 
         if self.lr_scheduler is not None:
             self.lr_scheduler.step()
         time_elapsed = time.time() - start_epoch
         print('Epoch completes in {:.0f}m {:.0f}s'.format(
-        time_elapsed // 60, time_elapsed % 60))
+            time_elapsed // 60, time_elapsed % 60))
 
         return log
 
@@ -97,21 +127,49 @@ class Trainer(BaseTrainer):
         self.valid_metrics.reset()
         with torch.no_grad():
             for batch_idx, (inputs, labels) in enumerate(self.valid_data_loader):
-                face, body, context = inputs['face'].to(self.device), inputs['body'].to(self.device), inputs['context'].to(self.device)
-                labels = labels.to(self.device)
+                if inputs is None:  # Bỏ qua batch rỗng
+                    continue
 
-                output = self.model(face, body, context)
+                # Chuyển các tensor từ ViltProcessor sang device
+                input_ids = inputs['input_ids'].to(self.device)
+                attention_mask = inputs['attention_mask'].to(self.device)
+                token_type_ids = inputs['token_type_ids'].to(self.device)
+
+                pixel_values_face = inputs['pixel_values_face'].to(self.device)
+                pixel_values_context = inputs['pixel_values_context'].to(self.device)
+
+                # Lấy ảnh PIL (list) để trực quan hóa
+                face_imgs = inputs.get('face')
+                body_imgs = inputs.get('body')
+                context_imgs = inputs.get('context')
+
+                # Gọi mô hình
+                output = self.model(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            pixel_values_context=pixel_values_context,
+                            pixel_values_face=pixel_values_face
+                )
                 loss = self.criterion(output, labels)
 
                 self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
                 self.valid_metrics.update('loss', loss.item())
                 for met in self.metric_ftns:
                     self.valid_metrics.update(met.__name__, met(output, labels))
-                self.writer.add_image('face', make_grid(face.cpu(), nrow=4, normalize=True))
-                self.writer.add_image('body', make_grid(body.cpu(), nrow=4, normalize=True))
-                self.writer.add_image('context', make_grid(context.cpu(), nrow=2, normalize=True))
 
-        # add histogram of model parameters to the tensorboard
+                # Ghi ảnh vào TensorBoard nếu có
+                # if face_imgs:
+                #     face_tensors = [transforms.ToTensor()(img) for img in face_imgs]
+                #     self.writer.add_image('face', make_grid(face_tensors, nrow=4, normalize=True))
+                # if body_imgs:
+                #     body_tensors = [transforms.ToTensor()(img) for img in body_imgs]
+                #     self.writer.add_image('body', make_grid(body_tensors, nrow=4, normalize=True))
+                # if context_imgs:
+                #     context_tensors = [transforms.ToTensor()(img) for img in context_imgs]
+                #     self.writer.add_image('context', make_grid(context_tensors, nrow=2, normalize=True))
+
+        # Ghi histogram của tham số mô hình
         for name, p in self.model.named_parameters():
             self.writer.add_histogram(name, p, bins='auto')
         return self.valid_metrics.result()
