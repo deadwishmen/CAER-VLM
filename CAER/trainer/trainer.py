@@ -129,7 +129,7 @@ class Trainer(BaseTrainer):
             for batch_idx, (inputs, labels) in enumerate(self.valid_data_loader):
                 if inputs is None:  # Bỏ qua batch rỗng
                     continue
-
+                labels = labels.to(self.device)
                 # Chuyển các tensor từ ViltProcessor sang device
                 input_ids = inputs['input_ids'].to(self.device)
                 attention_mask = inputs['attention_mask'].to(self.device)
