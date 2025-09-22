@@ -12,7 +12,6 @@ class BaseTrainer:
         self.config = config
         self.logger = config.get_logger('trainer', config['trainer']['verbosity'])
 
-
         # setup GPU device if available, move model into configured device
         self.device, device_ids = self._prepare_device(config['n_gpu'])
         self.model = model.to(self.device)
@@ -26,7 +25,6 @@ class BaseTrainer:
         cfg_trainer = config['trainer']
         self.epochs = cfg_trainer['epochs']
         self.save_period = cfg_trainer['save_period']
-        self.best_model_path = cfg_trainer['weight_model']
         self.monitor = cfg_trainer.get('monitor', 'off')
 
         # configuration to monitor model performance and save best
@@ -40,7 +38,7 @@ class BaseTrainer:
             self.mnt_best = inf if self.mnt_mode == 'min' else -inf
             self.early_stop = cfg_trainer.get('early_stop', inf)
 
-        self.start_epoch = cfg_trainer.get('start_epoch', 1)
+        self.start_epoch = 1
 
         self.checkpoint_dir = config.save_dir
 
@@ -102,9 +100,7 @@ class BaseTrainer:
 
             if best or epoch % self.save_period == 0: 
                 self._save_checkpoint(epoch, save_best=best)
-                if best:
-                    best_model_path = str(self.checkpoint_dir / 'model_best.pth')
-        return best_model_path
+
     def _prepare_device(self, n_gpu_use):
         """
         setup GPU device if available, move model into configured device
@@ -155,7 +151,7 @@ class BaseTrainer:
         """
         resume_path = str(resume_path)
         self.logger.info("Loading checkpoint: {} ...".format(resume_path))
-        checkpoint = torch.load(resume_path)
+        checkpoint = torch.load(resume_path, weights_only = False)
         self.start_epoch = checkpoint['epoch'] + 1
         self.mnt_best = checkpoint['monitor_best']
 
