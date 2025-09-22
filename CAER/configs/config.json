@@ -8,6 +8,7 @@
       "face_model_path": "/content/drive/MyDrive/DatMinhNe/CAER/CAER-S_result/FER_trained_model.pt",
       "body_backbone": "swin_t",
       "context_backbone": "resnet50_places",
+      "model_checkpoint": "model_best.pth",
       "use_body": true,
       "use_context": true,
       "use_face": true,

@@ -43,6 +43,9 @@ def main(config):
 
     # build model architecture, then print to console
     model = config.init_obj('arch', module_arch)
+
+
+
     print(model)
     # load weight of the whole model if avalable
     try:
@@ -84,6 +87,15 @@ def main(config):
     optimizer = config.init_obj('optimizer', torch.optim, trainable_params)
 
     lr_scheduler = config.init_obj('lr_scheduler', torch.optim.lr_scheduler, optimizer)
+    if config.resume is not None:
+        checkpoint = torch.load(config.resume, weights_only=False)
+        state_dict = checkpoint['state_dict']
+        model.load_state_dict(state_dict)
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+        start_epoch = checkpoint.get('epoch', 0) + 1  # Tiếp tục từ epoch tiếp theo
+        config['trainer']['start_epoch'] = start_epoch
+        logger.info("Checkpoint loaded. Resume training from epoch {}".format(checkpoint['epoch']))
     print(data_loader)
     trainer = Trainer(model, criterion, metrics, optimizer,
                       config=config,
