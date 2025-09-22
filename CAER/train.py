@@ -46,36 +46,6 @@ def main(config):
 
 
 
-    print(model)
-    # load weight of the whole model if avalable
-    try:
-        model_checkpoint = config['model_checkpoint']
-        logger.info('Loading model weight...')
-        load_weight(model_checkpoint, model)
-        logger.info('Finish loading model!')
-    except:
-        try:
-            # load weight of face and context branch separately if available
-            face_checkpoint, body_checkpoint, context_checkpoint, freeze = (
-                config['face_checkpoint'],
-                config['body_checkpoint'],
-                config['context_checkpoint'],
-                config['freeze_checkpoint_weight']
-            )
-
-            logger.info('Loading face branch weight...')
-            load_weight(face_checkpoint, model, 
-                        start_keys=['two_stream_net.face_encoding_module'], freeze=freeze)
-            logger.info('Finish loading face branch weight!')   
-
-            logger.info('Loading context branch weight...')
-            load_weight(context_checkpoint, model, 
-                        start_keys=['two_stream_net.context_encoding_module',
-                                    'two_stream_net.attention_inference_module'], freeze=freeze)
-            logger.info('Finish loading context branch weight!') 
-        except:
-            pass 
-
     logger.info(model)
 
     # get function handles of loss and metrics
