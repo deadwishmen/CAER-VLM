@@ -157,7 +157,7 @@ class MyDataset(Dataset):
             # 4. Tạo context
             context = im.copy()
             draw = ImageDraw.Draw(context)
-            draw.rectangle((x1_face, y1_face, x2_face, y2_face), fill=(0, 0, 0))
+            draw.rectangle((x1_face, y1_face, x2_face, y2_face), outline="red", width=3)
             context = context.resize(self.image_size, Image.Resampling.LANCZOS)  # Thay đổi kích thước
 
             # 5. Xử lý với ViltProcessor
