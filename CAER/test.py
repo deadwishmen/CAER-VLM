@@ -39,12 +39,24 @@ def main(config):
 
     with torch.no_grad():
         for i, (data, target) in enumerate(tqdm(data_loader)):
-            face, body, context, target = data['face'].to(device), data['body'].to(device), data['context'].to(device), target.to(device)
-            output = model(face, body, context)
+            input_ids = data['input_ids'].to(device)
+            attention_mask = data['attention_mask'].to(device)
+            token_type_ids = data['token_type_ids'].to(device)
+
+            pixel_values_face = data['pixel_values_face'].to(device)
+            pixel_values_context = data['pixel_values_context'].to(device)
+            target = target.to(device)
+            output = model(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            pixel_values_context=pixel_values_context,
+                            pixel_values_face=pixel_values_face
+            )
 
             # computing loss, metrics on test set
             loss = loss_fn(output, target)
-            batch_size = face.shape[0]
+            batch_size = target.shape[0]
             total_loss += loss.item() * batch_size
             for i, metric in enumerate(metric_fns):
                 total_metrics[i] += metric(output, target) * batch_size
