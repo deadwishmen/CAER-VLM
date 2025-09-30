@@ -1,0 +1,105 @@
+{
+  "name": "CAERS_Session",
+  "n_gpu": 1,
+  "arch": {
+    "type": "CAERSNet",
+    "args": {
+      "num_classes": 7,
+      "face_model_path": "/content/drive/MyDrive/DatMinhNe/CAER/CAER-S_result/FER_trained_model.pt",
+      "body_backbone": "swin_t",
+      "context_backbone": "resnet50_places",
+      "model_checkpoint": "model_best.pth",
+      "use_body": true,
+      "use_context": true,
+      "use_face": true,
+      "freeze_backbones": true,
+      "attention": true
+    }
+  },
+  "loss": "cross_entropy",
+  "metrics": [
+    "accuracy"
+  ],
+
+  "test_loader": {
+    "type": "CAERSDataLoader",
+    "args": {
+      "root": "/content/drive/MyDrive/DatMinhNe/CAER/CAER-S/test",
+      "detect_file": "/content/drive/MyDrive/DatMinhNe/CAER/CAER-S/test_with_body.txt",
+      "train": false,
+      "batch_size": 64,
+      "shuffle": false,
+      "num_workers": 2
+    }
+  },
+  "train_loader": {
+    "type": "CAERSDataLoader",
+    "args": {
+      "root": "/content/drive/MyDrive/DatMinhNe/CAER/CAER-S/train",
+      "detect_file": "/content/drive/MyDrive/DatMinhNe/CAER/CAER-S/train_with_body.txt",
+      "batch_size": 64,
+      "shuffle": true,
+      "num_workers": 2
+    }
+  },
+  "val_loader": {
+    "type": "CAERSDataLoader",
+    "args": {
+      "root": "/content/drive/MyDrive/DatMinhNe/CAER/CAER-S/test",
+      "detect_file": "/content/drive/MyDrive/DatMinhNe/CAER/CAER-S/val_with_body.txt",
+      "train": false,
+      "batch_size": 64,
+      "shuffle": false,
+      "num_workers": 2
+    }
+  },
+  "optimizer": {
+      "type": "AdamW",
+      "args": {
+        "lr": 0.001,
+        "weight_decay": 0.01,
+        "betas": [0.9, 0.999]
+      }
+  },
+  "lr_scheduler": {  
+    "type": "StepLR",
+    "args": {
+      "step_size": 10,
+      "gamma": 0.1
+    }
+  },
+  "trainer": {
+    "epochs": 50,
+    "save_dir": "saved/",
+    "save_period": 5,
+    "verbosity": 2,
+    "monitor": "max val_accuracy",
+    "early_stop": 5,
+    "tensorboard": false
+  },
+  "grad_cam": {
+    "output_dir": "saved",
+    "num_samples": 10,
+    "method": "GradCAMPlusPlus",
+    "guided_backprop": true,
+    "smooth_cam": true,
+    "target_layers": {
+      "face": "backbone.face_features[27]",
+      "body": "backbone.body_extractor.features[-1][-1]", 
+      "context": "backbone.context_extractor.layer4"
+    }
+  },
+  "class_names":[
+    "Anger",
+    "Disgust",
+    "Fear",
+    "Happy",
+    "Neutral",
+    "Sad",
+    "Surprise"
+  ],
+  "image2text": {
+    "model_id": "llava-hf/llava-1.5-7b-hf",
+    "max_new_tokens": 250
+  }
+}
