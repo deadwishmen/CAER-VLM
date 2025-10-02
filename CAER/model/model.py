@@ -7,7 +7,7 @@ from transformers import ViltProcessor, ViltModel, ViltConfig
 
 class ViLTModule(nn.Module):
     """Module trích xuất đặc trưng sử dụng ViLT."""
-    def __init__(self, vilt_model_name="dandelin/vilt-b32-mlm", num_classes=7, num_attention_heads=8, num_layer_decoder=4, dim_feedforward=2048, new_text_max_len_for_model=256, cache_dir=None, freeze_vilt_base=True, dropout_rate=0.1):
+    def __init__(self, vilt_model_name="dandelin/vilt-b32-mlm", num_classes=7, num_attention_heads=8, num_layer_decoder=4, dim_feedforward=2048, new_text_max_len_for_model=256, cache_dir=None, freeze_vilt_base=True, dropout_rate=0.1, use_context_image=True, use_face_image=True, use_fusion=True):
         super().__init__()
 
         self.vilt_model_name = vilt_model_name
@@ -64,6 +64,10 @@ class ViLTModule(nn.Module):
         )
         print(f"ViltEmoticModel with TransformerDecoderLayer initialized. Classifier input dim: {classifier_input_dim}")
 
+        self.use_context_image = use_context_image
+        self.use_face_image = use_face_image
+        self.use_fusion = use_fusion
+
     def _masked_mean_pooling(self, last_hidden_state: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """Hàm helper để tính mean pooling có bỏ qua padding."""
         mask = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
@@ -73,44 +77,71 @@ class ViLTModule(nn.Module):
         return summed_state / summed_mask
     
     def forward(self, input_ids, attention_mask, token_type_ids, pixel_values_context, pixel_values_face):
-        # Trích xuất đặc trưng cho context
-        vilt_outputs_context = self.vilt(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            pixel_values=pixel_values_context,
-            return_dict=True
-        )
-        last_hidden_state_context = vilt_outputs_context.last_hidden_state
-        cls_features_context = last_hidden_state_context[:, 0, :]
+        batch_size, text_len = input_ids.shape
+        hidden_size = self.vilt.config.hidden_size
+        device = input_ids.device
 
-        # Trích xuất đặc trưng cho face (không sử dụng body)
-        vilt_outputs_face = self.vilt(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            pixel_values=pixel_values_face,
-            return_dict=True
-        )
-        last_hidden_state_face = vilt_outputs_face.last_hidden_state
-        cls_features_face = last_hidden_state_face[:, 0, :]
+        # Compute context branch if needed
+        need_context_for_pooled = self.use_context_image
+        need_context_for_fusion = self.use_fusion
+        last_hidden_state_context = None
+        if need_context_for_pooled or need_context_for_fusion:
+            pixel_values_c = pixel_values_context if self.use_context_image else None
+            vilt_outputs_context = self.vilt(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                pixel_values=pixel_values_c,
+                return_dict=True
+            )
+            last_hidden_state_context = vilt_outputs_context.last_hidden_state
 
-        # Fusion với Transformer Decoder
-        fused_sequences = self.fusion_decoder(
-            tgt=last_hidden_state_face,
-            memory=last_hidden_state_context
-        )
-        fused_cls_output = fused_sequences[:, 0, :]
+        # Compute face branch if needed
+        need_face_for_pooled = self.use_face_image
+        need_face_for_fusion = self.use_fusion
+        last_hidden_state_face = None
+        if need_face_for_pooled or need_face_for_fusion:
+            pixel_values_f = pixel_values_face if self.use_face_image else None
+            vilt_outputs_face = self.vilt(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                pixel_values=pixel_values_f,
+                return_dict=True
+            )
+            last_hidden_state_face = vilt_outputs_face.last_hidden_state
 
-        # Pooling trên đặc trưng văn bản
-        num_patches = (self.vilt.config.image_size // self.vilt.config.patch_size) ** 2
-        text_embedding_start_index = 1 + num_patches
-        text_hidden_state_context = last_hidden_state_context[:, text_embedding_start_index:, :]
-        text_hidden_state_face = last_hidden_state_face[:, text_embedding_start_index:, :]
-        pooled_features_context = self._masked_mean_pooling(text_hidden_state_context, attention_mask)
-        pooled_features_face = self._masked_mean_pooling(text_hidden_state_face, attention_mask)
+        # Fusion with Transformer Decoder
+        if self.use_fusion:
+            fused_sequences = self.fusion_decoder(
+                tgt=last_hidden_state_face,
+                memory=last_hidden_state_context
+            )
+            fused_cls_output = fused_sequences[:, 0, :]
+        else:
+            fused_cls_output = torch.zeros(batch_size, hidden_size, device=device)
 
-        # Kết hợp đặc trưng
+        # CLS features for face
+        if self.use_face_image:
+            cls_features_face = last_hidden_state_face[:, 0, :]
+        else:
+            cls_features_face = torch.zeros(batch_size, hidden_size, device=device)
+
+        # Pooling on text features
+        text_mask_for_pool = attention_mask[:, 1:text_len]
+        if self.use_context_image and last_hidden_state_context is not None:
+            text_hidden_state_context = last_hidden_state_context[:, 1:text_len, :]
+            pooled_features_context = self._masked_mean_pooling(text_hidden_state_context, text_mask_for_pool)
+        else:
+            pooled_features_context = torch.zeros(batch_size, hidden_size, device=device)
+
+        if self.use_face_image and last_hidden_state_face is not None:
+            text_hidden_state_face = last_hidden_state_face[:, 1:text_len, :]
+            pooled_features_face = self._masked_mean_pooling(text_hidden_state_face, text_mask_for_pool)
+        else:
+            pooled_features_face = torch.zeros(batch_size, hidden_size, device=device)
+
+        # Combine features
         combined_features = torch.cat(
             (
                 cls_features_face,        # Đặc trưng [CLS] gốc của face
@@ -121,7 +152,7 @@ class ViLTModule(nn.Module):
             dim=1
         )
 
-        # Dự đoán
+        # Prediction
         cat_pred = self.classifier_head(combined_features)
         return cat_pred
 
@@ -131,7 +162,10 @@ class CAERSVLMNet(BaseModel):
                  vilt_model_name="dandelin/vilt-b32-mlm",
                  dropout_rate=0.1,
                  text_max_len=256,
-                 freeze_vilt_base=True):
+                 freeze_vilt_base=True,
+                 use_context_image=True,
+                 use_face_image=True,
+                 use_fusion=True):
         super().__init__()
         
         self.ViLT_model = ViLTModule(
@@ -139,7 +173,10 @@ class CAERSVLMNet(BaseModel):
             num_classes=num_classes,
             new_text_max_len_for_model=text_max_len,
             freeze_vilt_base=freeze_vilt_base,
-            dropout_rate=dropout_rate
+            dropout_rate=dropout_rate,
+            use_context_image=use_context_image,
+            use_face_image=use_face_image,
+            use_fusion=use_fusion
         )
 
     def forward(self, input_ids, attention_mask, token_type_ids, pixel_values_context, pixel_values_face):
