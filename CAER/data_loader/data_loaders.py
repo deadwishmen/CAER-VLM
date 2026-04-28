@@ -53,17 +53,23 @@ class MyDataset(Dataset):
     - __getitem__ chỉ tập trung vào việc tải và xử lý ảnh, giúp tăng tốc độ.
     - Xử lý lỗi chi tiết và mạnh mẽ hơn.
     """
-    def __init__(self, root, input_file, default_body_size=(224, 224), text_max_len=256, image_size=(384, 384), debug_save_count=0):
+    def __init__(self, root, input_file, default_body_size=(224, 224), text_max_len=256, image_size=(384, 384), debug_save_count=0, debug_save_dir=None):
         self.root = root
         self.default_body_size = default_body_size
         self.vilt_processor = load_vilt_processor()
         self.text_max_len = text_max_len
         self.image_size = image_size  # Kích thước cố định cho ảnh
 
-        # Thêm code để debug: lưu một vài ảnh đã cắt
         self.debug_save_count = debug_save_count
         if self.debug_save_count > 0:
-            self.debug_save_path = "debug_output/cropped_faces"
+            # THAY ĐỔI: Sử dụng đường dẫn có thể cấu hình, thay vì hardcode
+            if debug_save_dir:
+                # Tạo đường dẫn đầy đủ cho các ảnh debug
+                self.debug_save_path = os.path.join(debug_save_dir, "cropped_faces")
+            else:
+                # Giữ lại hành vi mặc định nếu không có đường dẫn nào được cung cấp
+                self.debug_save_path = "debug_output/cropped_faces"
+
             os.makedirs(self.debug_save_path, exist_ok=True)
             print(f"Sẽ lưu {self.debug_save_count} ảnh khuôn mặt đã cắt vào thư mục '{self.debug_save_path}'")
 
@@ -222,12 +228,13 @@ class MyDataset(Dataset):
             return None
 
 class CAERSDataLoader(BaseDataLoader):
-    def __init__(self, root, detect_file, train=True, batch_size=32, shuffle=True, num_workers=2, debug_save_count=0):
+    def __init__(self, root, detect_file, train=True, batch_size=32, shuffle=True, num_workers=2, debug_save_count=0, debug_save_dir=None):
         """
         Create dataloader from directory
         Args:
             - root (str): root directory
             - detect_file (str): file containing results from detector
         """
-        self.dataset = MyDataset(root, detect_file, debug_save_count=debug_save_count)
+        # THAY ĐỔI: Truyền `debug_save_dir` vào MyDataset
+        self.dataset = MyDataset(root, detect_file, debug_save_count=debug_save_count, debug_save_dir=debug_save_dir)
         super().__init__(self.dataset, batch_size, shuffle, validation_split=0.0, num_workers=num_workers, collate_fn=collate_fn)
