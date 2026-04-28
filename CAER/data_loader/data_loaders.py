@@ -70,7 +70,7 @@ class MyDataset(Dataset):
         # Phân tích toàn bộ file và lưu kết quả đã được làm sạch
         self.samples = self._read_and_parse_input_file(input_file)
         if not self.samples:
-            print("Cảnh báo: Không có mẫu dữ liệu hợp lệ nào được tải.")
+            raise ValueError(f"Lỗi: Không có mẫu dữ liệu hợp lệ nào được tải từ '{input_file}'. Vui lòng kiểm tra lại nội dung file (phải có đủ từ 10 cột trở lên) hoặc kiểm tra đường dẫn file.")
 
     def _read_and_parse_input_file(self, file_path):
         """Đọc và phân tích file annotation, lọc ra các dòng bị lỗi."""
