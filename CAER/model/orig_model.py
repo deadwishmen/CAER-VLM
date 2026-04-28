@@ -34,7 +34,7 @@ class CNN2DBlock(nn.Module):
                 x = self.bn[i](x)
             if self.relu is not None:
                 x = self.relu(x)
-            if self.maxpool is not None:
+            if self.maxpool is not None and i < n - 1:
                 x = self.maxpool(x)
 
         return x 
@@ -108,8 +108,8 @@ class FusionNetwork(nn.Module):
             weights = torch.cat([face_weights, context_weights], dim=1)
             weights = F.softmax(weights, dim=1)
 
-            face = face * weights[:, 0, :].unsqueeze(dim=1)
-            context = context * weights[:, 1, :].unsqueeze(dim=1)
+            face = face * weights[:, 0:1, :, :]
+            context = context * weights[:, 1:2, :, :]
 
         if self.use_context and self.use_face:
             features = torch.cat([face, context], dim=1)

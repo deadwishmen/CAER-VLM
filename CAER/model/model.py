@@ -67,6 +67,10 @@ class ViLTModule(nn.Module):
         self.use_context_image = use_context_image
         self.use_face_image = use_face_image
         self.use_fusion = use_fusion
+        
+        if self.use_fusion:
+            assert self.use_context_image and self.use_face_image, \
+                "Both use_context_image and use_face_image must be True when use_fusion is True."
 
     def _masked_mean_pooling(self, last_hidden_state: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """Hàm helper để tính mean pooling có bỏ qua padding."""

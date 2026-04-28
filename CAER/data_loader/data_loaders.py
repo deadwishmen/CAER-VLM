@@ -53,12 +53,19 @@ class MyDataset(Dataset):
     - __getitem__ chỉ tập trung vào việc tải và xử lý ảnh, giúp tăng tốc độ.
     - Xử lý lỗi chi tiết và mạnh mẽ hơn.
     """
-    def __init__(self, root, input_file, default_body_size=(224, 224), text_max_len=256, image_size=(384, 384)):
+    def __init__(self, root, input_file, default_body_size=(224, 224), text_max_len=256, image_size=(384, 384), debug_save_count=0):
         self.root = root
         self.default_body_size = default_body_size
         self.vilt_processor = load_vilt_processor()
         self.text_max_len = text_max_len
         self.image_size = image_size  # Kích thước cố định cho ảnh
+
+        # Thêm code để debug: lưu một vài ảnh đã cắt
+        self.debug_save_count = debug_save_count
+        if self.debug_save_count > 0:
+            self.debug_save_path = "debug_output/cropped_faces"
+            os.makedirs(self.debug_save_path, exist_ok=True)
+            print(f"Sẽ lưu {self.debug_save_count} ảnh khuôn mặt đã cắt vào thư mục '{self.debug_save_path}'")
 
         # Phân tích toàn bộ file và lưu kết quả đã được làm sạch
         self.samples = self._read_and_parse_input_file(input_file)
@@ -144,9 +151,31 @@ class MyDataset(Dataset):
                 if coord < 0 or coord > img_height:
                     print(f"Lỗi: Tọa độ {name} ({coord}) ngoài giới hạn chiều cao ảnh ({img_height}) tại '{full_path}'")
                     return None
+            
+            # Ép tọa độ (clipping) nằm trong giới hạn [0, width] và [0, height] để không bị lỗi crop
+            x1_face = max(0, min(x1_face, img_width))
+            x2_face = max(0, min(x2_face, img_width))
+            x1_body = max(0, min(x1_body, img_width))
+            x2_body = max(0, min(x2_body, img_width))
+            
+            y1_face = max(0, min(y1_face, img_height))
+            y2_face = max(0, min(y2_face, img_height))
+            y1_body = max(0, min(y1_body, img_height))
+            y2_body = max(0, min(y2_body, img_height))
 
             # 3. Cắt ảnh
             face = im.crop((x1_face, y1_face, x2_face, y2_face))
+
+            # --- THÊM CODE ĐỂ LƯU ẢNH DEBUG ---
+            if hasattr(self, 'debug_save_count') and self.debug_save_count > 0 and idx < self.debug_save_count:
+                try:
+                    # Lưu ảnh TRƯỚC KHI resize để kiểm tra chất lượng cắt gốc
+                    save_path = os.path.join(self.debug_save_path, f"face_sample_{idx}_{os.path.basename(sample_info['image_path'])}")
+                    face.save(save_path)
+                except Exception as save_e:
+                    print(f"Không thể lưu ảnh debug cho index {idx}: {save_e}")
+            # --- KẾT THÚC PHẦN THÊM ---
+
             face = face.resize(self.image_size, Image.Resampling.LANCZOS)  # Thay đổi kích thước
             if all(c == 0 for c in coords[4:]):
                 body = Image.new('RGB', self.default_body_size, (0, 0, 0))
@@ -193,12 +222,12 @@ class MyDataset(Dataset):
             return None
 
 class CAERSDataLoader(BaseDataLoader):
-    def __init__(self, root, detect_file, train=True, batch_size=32, shuffle=True, num_workers=2):
+    def __init__(self, root, detect_file, train=True, batch_size=32, shuffle=True, num_workers=2, debug_save_count=0):
         """
         Create dataloader from directory
         Args:
             - root (str): root directory
             - detect_file (str): file containing results from detector
         """
-        self.dataset = MyDataset(root, detect_file)
+        self.dataset = MyDataset(root, detect_file, debug_save_count=debug_save_count)
         super().__init__(self.dataset, batch_size, shuffle, validation_split=0.0, num_workers=num_workers, collate_fn=collate_fn)
