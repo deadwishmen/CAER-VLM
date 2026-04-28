@@ -121,7 +121,9 @@ if __name__ == '__main__':
     args.add_argument('-c', '--config', default=None, type=str,
                       help='Config file path (default: None)')
     args.add_argument('-d', '--device', default=None, type=str,
-                      help='indices of GPUs to enable')
+                      help='indices of GPUs to enable (default: all)')
+    args.add_argument('-r', '--resume', default=None, type=str,
+                      help='path to latest checkpoint (default: None), not used in this script but required by parser')
     
     config = ConfigParser.from_args(args)
     main(config)
