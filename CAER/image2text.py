@@ -40,6 +40,13 @@ def prepare_batch_data(lines: List[str], root: str, processed_images: set, batch
             if image_path in processed_images:
                 continue
             
+            # Dữ liệu chuẩn có 10 cột đầu tiên là thông tin cơ bản (path, label, 8 tọa độ)
+            # Bất cứ phần text cũ nào từ cột thứ 11 trở đi đều bị cắt bỏ để chuẩn bị đè text mới.
+            if len(parts) >= 10:
+                base_info = ','.join(parts[:10])
+            else:
+                base_info = ','.join(parts)
+
             face_coords = tuple(map(int, parts[2:6]))
             full_image_path = os.path.join(root, image_path)
             
@@ -48,7 +55,7 @@ def prepare_batch_data(lines: List[str], root: str, processed_images: set, batch
                 continue
             
             current_batch.append({
-                'original_line': line.strip(),
+                'base_info': base_info,
                 'image_path': image_path,
                 'full_image_path': full_image_path,
                 'face_coords': face_coords
@@ -100,7 +107,7 @@ def process_image_batch(batch_items: List[dict], pipe, prompts: str, max_new_tok
         for i, result in enumerate(results):
             output_prompt = result["generated_text"]
             output_prompt = get_assistant_text(output_prompt)
-            output_line = f"{batch_items[i]['original_line']},{output_prompt}"
+            output_line = f"{batch_items[i]['base_info']},{output_prompt}"
             output_lines.append(output_line)
         
         return output_lines
@@ -119,7 +126,7 @@ def process_image_batch(batch_items: List[dict], pipe, prompts: str, max_new_tok
                 result = pipe(image, text=prompts, generate_kwargs={"max_new_tokens": max_new_tokens})
                 output_prompt = result[0]["generated_text"]
                 output_prompt = get_assistant_text(output_prompt)
-                output_line = f"{item['original_line']},{output_prompt}"
+                output_line = f"{item['base_info']},{output_prompt}"
                 output_lines.append(output_line)
                 
             except Exception as e_single:
@@ -238,7 +245,7 @@ def run_inference_on_file(root, input_file, config, prompts, max_new_tokens, bat
     logger.info(f"All workers finished. Results have been saved to {output_file}.")
 
 
-def main(config, device_ids):
+def main(config, device_ids, prompt_file=None):
     logger = config.get_logger('image2text')
     logger.info("Starting inference process...")
     logger.info(f"Using devices: {device_ids}")
@@ -250,6 +257,13 @@ def main(config, device_ids):
     logger.info(f"Using batch size per GPU: {batch_size}")
     
     prompts = f"USER: <image>\nGiven the following list of emotions:{', '.join(class_names)}. Based on the image context, please choose which emotions are more suitable for describing how the person in the red box feels and explain in detail why you choose these emotions according to the aspects: actions and postures of the person in the red box, the context surrounding the person in the red box.\nASSISTANT:"
+    if prompt_file and os.path.exists(prompt_file):
+        logger.info(f"Loading prompt from file: {prompt_file}")
+        with open(prompt_file, 'r', encoding='utf-8') as f:
+            prompts = f.read().replace('{class_names}', ', '.join(class_names))
+    else:
+        prompts = f"USER: <image>\nGiven the following list of emotions:{', '.join(class_names)}. Based on the image context, please choose which emotions are more suitable for describing how the person in the red box feels and explain in detail why you choose these emotions according to the aspects: actions and postures of the person in the red box, the context surrounding the person in the red box.\nASSISTANT:"
+        
     model_id = config['image2text']['model_id']
 
     logger.info(f"Prompts: {prompts}")
@@ -278,6 +292,8 @@ if __name__ == '__main__':
                         help='path to latest checkpoint (default: None)')
     args.add_argument('-b', '--batch_size', default=None, type=int,
                         help='batch size for inference (default: from config)')
+    args.add_argument('-p', '--prompt_file', default=None, type=str,
+                        help='path to a text file containing the prompt template (use {class_names} to inject classes)')
 
     config = ConfigParser.from_args(args)
     parsed_args = args.parse_args() 
@@ -300,4 +316,4 @@ if __name__ == '__main__':
             config.config['image2text'] = {}
         config.config['image2text']['batch_size'] = parsed_args.batch_size
     
-    main(config, device_ids)
+    main(config, device_ids, parsed_args.prompt_file)
