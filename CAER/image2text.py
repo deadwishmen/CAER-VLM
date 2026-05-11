@@ -256,13 +256,26 @@ def main(config, device_ids, prompt_file=None):
     batch_size = config['image2text'].get('batch_size', 8)
     logger.info(f"Using batch size per GPU: {batch_size}")
     
-    prompts = f"USER: <image>\nGiven the following list of emotions:{', '.join(class_names)}. Based on the image context, please choose which emotions are more suitable for describing how the person in the red box feels and explain in detail why you choose these emotions according to the aspects: actions and postures of the person in the red box, the context surrounding the person in the red box.\nASSISTANT:"
+    emotions_str = ', '.join(class_names)
+
+    prompt = (
+        "USER: <image>\n"
+        f"Given the following list of emotions: {emotions_str}. "
+        "Based on the image context, please choose which emotions are more suitable "
+        "for describing how the person in the red box feels and explain in detail "
+        "why you choose these emotions according to the aspects: "
+        "actions and postures of the person in the red box, "
+        "facial expressions of the person in the red box "
+        "(e.g., eye contact, mouth shape, eyebrow position, and overall facial tension), "
+        "the context surrounding the person in the red box.\n"
+        "ASSISTANT:"
+    )
     if prompt_file and os.path.exists(prompt_file):
         logger.info(f"Loading prompt from file: {prompt_file}")
         with open(prompt_file, 'r', encoding='utf-8') as f:
             prompts = f.read().replace('{class_names}', ', '.join(class_names))
     else:
-        prompts = f"USER: <image>\nGiven the following list of emotions:{', '.join(class_names)}. Based on the image context, please choose which emotions are more suitable for describing how the person in the red box feels and explain in detail why you choose these emotions according to the aspects: actions and postures of the person in the red box, the context surrounding the person in the red box.\nASSISTANT:"
+        prompts = f"USER: <image>\nGiven the following list of emotions: {', '.join(class_names)}. Based on the image context, please choose which emotions are more suitable for describing how the person in the red box feels and explain in detail why you choose these emotions according to the aspects: actions and postures of the person in the red box, the context surrounding the person in the red box.\nASSISTANT:"
         
     model_id = config['image2text']['model_id']
 
