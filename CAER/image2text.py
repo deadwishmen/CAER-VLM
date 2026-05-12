@@ -11,6 +11,7 @@ import multiprocessing as mp
 from multiprocessing import Lock # ### THAY ĐỔI ###: Import thêm Lock
 from torch.utils.data import Dataset, DataLoader
 import math
+import concurrent.futures
 
 def read_image(image_path):
     """
@@ -24,22 +25,36 @@ def get_assistant_text(text):
     return assistant_text
 
 class ImageTextDataset(Dataset):
-    def __init__(self, items):
-        self.items = items
+    def __init__(self, items, gpu_id=0, logger=None):
+        self.preloaded_items = []
+        if logger:
+            logger.info(f"Đang đẩy {len(items)} ảnh vào RAM (GPU Worker {gpu_id})...")
+        
+        def load_image_to_ram(item):
+            try:
+                image = read_image(item['full_image_path'])
+                x1, y1, x2, y2 = item['face_coords']
+                draw = ImageDraw.Draw(image)
+                draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
+                return {"valid": True, "image": image, "base_info": item['base_info']}
+            except Exception as e:
+                return {"valid": False, "error": str(e), "item": item}
+        
+        # Sử dụng ThreadPoolExecutor để đọc ảnh đa luồng vào RAM cực nhanh
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+            self.preloaded_items = list(tqdm(
+                executor.map(load_image_to_ram, items), 
+                total=len(items), 
+                desc=f"Worker {gpu_id} Loading RAM",
+                position=gpu_id,
+                leave=False
+            ))
         
     def __len__(self):
-        return len(self.items)
+        return len(self.preloaded_items)
         
     def __getitem__(self, idx):
-        item = self.items[idx]
-        try:
-            image = read_image(item['full_image_path'])
-            x1, y1, x2, y2 = item['face_coords']
-            draw = ImageDraw.Draw(image)
-            draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
-            return {"valid": True, "image": image, "base_info": item['base_info']}
-        except Exception as e:
-            return {"valid": False, "error": str(e), "item": item}
+        return self.preloaded_items[idx]
 
 def custom_collate(batch):
     valid_batch = [b for b in batch if b["valid"]]
@@ -96,7 +111,8 @@ def process_worker(gpu_id, items_chunk, model_id, prompts, max_new_tokens, outpu
     """
     logger = config.get_logger(f'worker_gpu_{gpu_id}')
     device = torch.device(f'cuda:{gpu_id}')
-    batch_size = config['image2text'].get('batch_size', 8)
+    # Tăng batch_size mặc định lên 64 cho A100 (80GB)
+    batch_size = config['image2text'].get('batch_size', 64)
     logger.info(f"Worker on GPU {gpu_id} started, processing {len(items_chunk)} items with batch size {batch_size}.")
 
     # Tối ưu cho A100: Sử dụng bfloat16 (Ampere Architecture) để tối đa hoá Tensor Cores
@@ -117,14 +133,13 @@ def process_worker(gpu_id, items_chunk, model_id, prompts, max_new_tokens, outpu
         logger.error(f"Failed to create pipeline on GPU {gpu_id}: {e}")
         return
 
-    # Khởi tạo DataLoader để xử lý tải và cắt ảnh trên CPU thông qua đa tiến trình (tận dụng 40GB RAM)
-    dataset = ImageTextDataset(items_chunk)
+    # Khởi tạo DataLoader. Toàn bộ ảnh đã nằm trong RAM nên không cần num_workers hay prefetch.
+    dataset = ImageTextDataset(items_chunk, gpu_id=gpu_id, logger=logger)
     dataloader = DataLoader(
         dataset, 
         batch_size=batch_size, 
-        num_workers=4,          # 4 workers đủ để load ảnh nhanh chóng mà không tràn RAM
+        num_workers=0,
         collate_fn=custom_collate, 
-        prefetch_factor=2,      # Pre-fetch 2 batch sẵn vào hàng đợi
         shuffle=False
     )
 
@@ -253,7 +268,8 @@ def main(config, device_ids, prompt_file=None):
     class_names = config['class_names']
     max_new_tokens = config['image2text']['max_new_tokens']
     
-    batch_size = config['image2text'].get('batch_size', 8)
+    # Tăng default batch_size ở hàm main
+    batch_size = config['image2text'].get('batch_size', 64)
     logger.info(f"Using batch size per GPU: {batch_size}")
     
     emotions_str = ', '.join(class_names)
