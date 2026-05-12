@@ -199,25 +199,19 @@ def run_inference_on_file(root, input_file, config, prompts, max_new_tokens, bat
     with open(input_file, 'r', encoding='utf-8') as f_in:
         all_lines = f_in.readlines()
 
-    logger.info("Preparing batch data...")
-    batch_data = prepare_batch_data(all_lines, root, processed_images, batch_size, logger)
-    logger.info(f"Total batches to process: {len(batch_data)}")
+    logger.info("Preparing data items...")
+    items = prepare_data_items(all_lines, root, processed_images, logger)
+    logger.info(f"Total items to process: {len(items)}")
     
-    if not batch_data:
+    if not items:
         logger.info("No new data to process.")
         return
 
-    # Đoạn code mới đã sửa lỗi
     num_gpus = len(device_ids)
     
-    # Tạo mảng các chỉ số (indices) thay vì dùng trực tiếp batch_data
-    indices = np.arange(len(batch_data))
-    
-    # Chia các chỉ số thành các phần cho từng GPU
-    index_chunks = np.array_split(indices, num_gpus)
-    
-    # Map lại data từ các chỉ số đã chia
-    chunks = [[batch_data[idx] for idx in chunk] for chunk in index_chunks]
+    # Chia đều số lượng items cho các GPU
+    chunk_size = math.ceil(len(items) / num_gpus)
+    chunks = [items[i:i + chunk_size] for i in range(0, len(items), chunk_size)]
     
     # Tạo Lock để chia sẻ giữa các tiến trình
     manager = mp.Manager()
