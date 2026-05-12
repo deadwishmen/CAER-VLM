@@ -214,8 +214,17 @@ def run_inference_on_file(root, input_file, config, prompts, max_new_tokens, bat
         logger.info("No new data to process.")
         return
 
+    # Đoạn code mới đã sửa lỗi
     num_gpus = len(device_ids)
-    chunks = np.array_split(batch_data, num_gpus) 
+    
+    # Tạo mảng các chỉ số (indices) thay vì dùng trực tiếp batch_data
+    indices = np.arange(len(batch_data))
+    
+    # Chia các chỉ số thành các phần cho từng GPU
+    index_chunks = np.array_split(indices, num_gpus)
+    
+    # Map lại data từ các chỉ số đã chia
+    chunks = [[batch_data[idx] for idx in chunk] for chunk in index_chunks]
     
     # Tạo Lock để chia sẻ giữa các tiến trình
     manager = mp.Manager()
