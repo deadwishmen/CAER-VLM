@@ -232,8 +232,14 @@ def run_inference_on_file(root, input_file, config, prompts, max_new_tokens, bat
             ))
 
     ctx = mp.get_context('spawn')
-    with ctx.Pool(processes=num_gpus) as pool:
-        pool.starmap(process_worker, worker_args)
+    processes = []
+    for args in worker_args:
+        p = ctx.Process(target=process_worker, args=args)
+        p.start()
+        processes.append(p)
+        
+    for p in processes:
+        p.join()
 
     # Không cần gộp file nữa
     logger.info(f"All workers finished. Results have been saved to {output_file}.")
