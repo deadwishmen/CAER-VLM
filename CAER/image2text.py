@@ -9,6 +9,8 @@ from PIL import Image, ImageDraw
 from typing import List, Tuple
 import multiprocessing as mp
 from multiprocessing import Lock # ### THAY ĐỔI ###: Import thêm Lock
+from torch.utils.data import Dataset, DataLoader
+import math
 
 def read_image(image_path):
     """
@@ -21,13 +23,37 @@ def get_assistant_text(text):
     assistant_text = text[start_index:] if start_index != -1 else ""
     return assistant_text
 
-def prepare_batch_data(lines: List[str], root: str, processed_images: set, batch_size: int, logger):
+class ImageTextDataset(Dataset):
+    def __init__(self, items):
+        self.items = items
+        
+    def __len__(self):
+        return len(self.items)
+        
+    def __getitem__(self, idx):
+        item = self.items[idx]
+        try:
+            image = read_image(item['full_image_path'])
+            x1, y1, x2, y2 = item['face_coords']
+            draw = ImageDraw.Draw(image)
+            draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
+            return {"valid": True, "image": image, "base_info": item['base_info']}
+        except Exception as e:
+            return {"valid": False, "error": str(e), "item": item}
+
+def custom_collate(batch):
+    valid_batch = [b for b in batch if b["valid"]]
+    if not valid_batch:
+        return None
+    images = [b["image"] for b in valid_batch]
+    base_infos = [b["base_info"] for b in valid_batch]
+    return images, base_infos
+
+def prepare_data_items(lines: List[str], root: str, processed_images: set, logger):
     """
-    Prepere batch data for processing
+    Prepare list of data items for processing
     """
-    batch_data = []
-    current_batch = []
-    
+    items = []
     for line in lines:
         try:
             parts = line.strip().split(',')
@@ -36,12 +62,9 @@ def prepare_batch_data(lines: List[str], root: str, processed_images: set, batch
             
             image_path = parts[0]
             
-            # Skip already processed images
             if image_path in processed_images:
                 continue
             
-            # Dữ liệu chuẩn có 10 cột đầu tiên là thông tin cơ bản (path, label, 8 tọa độ)
-            # Bất cứ phần text cũ nào từ cột thứ 11 trở đi đều bị cắt bỏ để chuẩn bị đè text mới.
             if len(parts) >= 10:
                 base_info = ','.join(parts[:10])
             else:
@@ -54,99 +77,32 @@ def prepare_batch_data(lines: List[str], root: str, processed_images: set, batch
                 logger.warning(f"Image {full_image_path} does not exist. Skipping.")
                 continue
             
-            current_batch.append({
+            items.append({
                 'base_info': base_info,
                 'image_path': image_path,
                 'full_image_path': full_image_path,
                 'face_coords': face_coords
             })
-            
-            # When reaching batch_size, add to bach_dât
-            if len(current_batch) == batch_size:
-                batch_data.append(current_batch)
-                current_batch = []
-                
         except Exception as e:
             logger.error(f"Failed to parse line: {line.strip()}. Error: {e}")
             continue
-    
-    # Add the last batch if it has remaining items
-    if current_batch:
-        batch_data.append(current_batch)
-    
-    return batch_data
+    return items
 
-def process_image_batch(batch_items: List[dict], pipe, prompts: str, max_new_tokens: int, logger):
-    """
-    Process a batch of images together
-    """
-    try:
-        # Prepare images for the batch
-        images = []
-        for item in batch_items:
-            # Read image and draw box
-            image = read_image(item['full_image_path'])
-            x1, y1, x2, y2 = item['face_coords']
-            draw = ImageDraw.Draw(image)
-            draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
-            images.append(image)
-        
-        # Create a list of prompt for each image in the batch
-        batch_prompts = [prompts] * len(images)
-
-        # Call the pipeline with the batch
-        results = pipe(
-            images, 
-            text=batch_prompts, 
-            generate_kwargs={"max_new_tokens": max_new_tokens},
-            batch_size=len(images)
-        )
-        
-        # Process results
-        output_lines = []
-        for i, result in enumerate(results):
-            output_prompt = result["generated_text"]
-            output_prompt = get_assistant_text(output_prompt)
-            output_line = f"{batch_items[i]['base_info']},{output_prompt}"
-            output_lines.append(output_line)
-        
-        return output_lines
-        
-    except Exception as e:
-        logger.error(f"Failed to process batch. Error: {e}")
-        # Fallback: Process images one by one
-        output_lines = []
-        for item in batch_items:
-            try:
-                image = read_image(item['full_image_path'])
-                x1, y1, x2, y2 = item['face_coords']
-                draw = ImageDraw.Draw(image)
-                draw.rectangle((x1, y1, x2, y2), outline="red", width=3)
-                
-                result = pipe(image, text=prompts, generate_kwargs={"max_new_tokens": max_new_tokens})
-                output_prompt = result[0]["generated_text"]
-                output_prompt = get_assistant_text(output_prompt)
-                output_line = f"{item['base_info']},{output_prompt}"
-                output_lines.append(output_line)
-                
-            except Exception as e_single:
-                logger.error(f"Failed to process single image {item['image_path']}. Error: {e_single}")
-                continue
-        
-        return output_lines
-
-### THAY ĐỔI ###: Sửa hàm worker để nhận Lock và ghi trực tiếp vào file output
-def process_worker(gpu_id, batch_chunks, model_id, prompts, max_new_tokens, output_file, lock, config):
+### THAY ĐỔI ###: Sửa hàm worker để sử dụng DataLoader tối ưu I/O và bfloat16 cho A100
+def process_worker(gpu_id, items_chunk, model_id, prompts, max_new_tokens, output_file, lock, config):
     """
     Hàm worker, mỗi worker sẽ chạy trên một tiến trình và một GPU riêng biệt.
-    Sử dụng Lock để ghi trực tiếp vào file output chung.
+    Đã tối ưu hóa DataLoader và Precision cho A100 80GB + 40GB RAM.
     """
     logger = config.get_logger(f'worker_gpu_{gpu_id}')
     device = torch.device(f'cuda:{gpu_id}')
-    logger.info(f"Worker on GPU {gpu_id} started, processing {len(batch_chunks)} batches.")
+    batch_size = config['image2text'].get('batch_size', 8)
+    logger.info(f"Worker on GPU {gpu_id} started, processing {len(items_chunk)} items with batch size {batch_size}.")
 
+    # Tối ưu cho A100: Sử dụng bfloat16 (Ampere Architecture) để tối đa hoá Tensor Cores
+    # Cải thiện tốc độ và tránh lỗi tràn số so với float16
     model_kwargs = {
-        "torch_dtype": torch.float16,
+        "torch_dtype": torch.bfloat16, 
         "device_map": {"": device}
     }
     
@@ -161,17 +117,54 @@ def process_worker(gpu_id, batch_chunks, model_id, prompts, max_new_tokens, outp
         logger.error(f"Failed to create pipeline on GPU {gpu_id}: {e}")
         return
 
-    progress_bar = tqdm(batch_chunks, desc=f"GPU {gpu_id}", position=gpu_id)
-    for batch_items in progress_bar:
-        output_lines = process_image_batch(batch_items, pipe, prompts, max_new_tokens, logger)
+    # Khởi tạo DataLoader để xử lý tải và cắt ảnh trên CPU thông qua đa tiến trình (tận dụng 40GB RAM)
+    dataset = ImageTextDataset(items_chunk)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=batch_size, 
+        num_workers=4,          # 4 workers đủ để load ảnh nhanh chóng mà không tràn RAM
+        collate_fn=custom_collate, 
+        prefetch_factor=2,      # Pre-fetch 2 batch sẵn vào hàng đợi
+        shuffle=False
+    )
+
+    progress_bar = tqdm(dataloader, desc=f"GPU {gpu_id}", position=gpu_id)
+    for batch in progress_bar:
+        if batch is None:
+            continue
+            
+        images, base_infos = batch
+        batch_prompts = [prompts] * len(images)
         
-        # Sử dụng lock để đảm bảo chỉ 1 tiến trình được ghi file tại 1 thời điểm
-        with lock:
-            # Mở file output chung ở chế độ 'a' (append - ghi nối)
-            with open(output_file, 'a', encoding='utf-8') as f_out:
-                for output_line in output_lines:
-                    f_out.write(f"{output_line}\n")
-    
+        try:
+            # Đẩy qua model
+            results = pipe(
+                images, 
+                text=batch_prompts, 
+                generate_kwargs={"max_new_tokens": max_new_tokens},
+                batch_size=len(images)
+            )
+            
+            output_lines = []
+            for i, result in enumerate(results):
+                # Lấy text an toàn từ pipeline
+                if isinstance(result, list):
+                    output_prompt = result[0]["generated_text"]
+                else:
+                    output_prompt = result["generated_text"]
+                    
+                output_prompt = get_assistant_text(output_prompt)
+                output_lines.append(f"{base_infos[i]},{output_prompt}")
+            
+            # Ghi nối vào tệp chung một cách thread-safe
+            with lock:
+                with open(output_file, 'a', encoding='utf-8') as f_out:
+                    for line in output_lines:
+                        f_out.write(f"{line}\n")
+                        
+        except Exception as e:
+            logger.error(f"Failed to process batch on GPU {gpu_id}. Error: {e}")
+            
     logger.info(f"Worker on GPU {gpu_id} finished.")
 
 
@@ -232,19 +225,17 @@ def run_inference_on_file(root, input_file, config, prompts, max_new_tokens, bat
     
     worker_args = []
     for i, gpu_id in enumerate(device_ids):
-        chunk_list = [list(batch) for batch in chunks[i]]
-        if not chunk_list: continue
-        
-        worker_args.append((
-            gpu_id, 
-            chunk_list,
-            config['image2text']['model_id'],
-            prompts,
-            max_new_tokens,
-            output_file,  # Truyền đường dẫn file output cuối cùng
-            lock,         # Truyền đối tượng lock
-            config
-        ))
+        if i < len(chunks) and chunks[i]:
+            worker_args.append((
+                gpu_id, 
+                chunks[i],
+                config['image2text']['model_id'],
+                prompts,
+                max_new_tokens,
+                output_file,
+                lock,
+                config
+            ))
 
     ctx = mp.get_context('spawn')
     with ctx.Pool(processes=num_gpus) as pool:
