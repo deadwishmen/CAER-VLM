@@ -274,7 +274,7 @@ def main(config, device_ids, prompt_file=None):
     
     emotions_str = ', '.join(class_names)
 
-    prompt = (
+    prompts = (
         "USER: <image>\n"
         f"Given the following list of emotions: {emotions_str}. "
         "Based on the image context, please choose which emotions are more suitable "
@@ -290,9 +290,7 @@ def main(config, device_ids, prompt_file=None):
         logger.info(f"Loading prompt from file: {prompt_file}")
         with open(prompt_file, 'r', encoding='utf-8') as f:
             prompts = f.read().replace('{class_names}', ', '.join(class_names))
-    else:
-        prompts = f"USER: <image>\nGiven the following list of emotions: {', '.join(class_names)}. Based on the image context, please choose which emotions are more suitable for describing how the person in the red box feels and explain in detail why you choose these emotions according to the aspects: actions and postures of the person in the red box, the context surrounding the person in the red box.\nASSISTANT:"
-        
+            
     model_id = config['image2text']['model_id']
 
     logger.info(f"Prompts: {prompts}")
