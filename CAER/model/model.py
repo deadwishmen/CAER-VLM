@@ -7,7 +7,7 @@ from transformers import ViltProcessor, ViltModel, ViltConfig
 
 class ViLTModule(nn.Module):
     """Module trích xuất đặc trưng sử dụng ViLT."""
-    def __init__(self, vilt_model_name="dandelin/vilt-b32-mlm", num_classes=7, num_attention_heads=8, num_layer_decoder=4, dim_feedforward=2048, new_text_max_len_for_model=256, cache_dir=None, freeze_vilt_base=True, dropout_rate=0.1, use_context_image=True, use_face_image=True, use_fusion=True):
+    def __init__(self, vilt_model_name="dandelin/vilt-b32-mlm", num_classes=7, num_attention_heads=8, num_layer_decoder=2, dim_feedforward=1024, new_text_max_len_for_model=256, cache_dir=None, freeze_vilt_base=True, dropout_rate=0.1, use_context_image=True, use_face_image=True, use_fusion=True):
         super().__init__()
 
         self.vilt_model_name = vilt_model_name
@@ -88,31 +88,39 @@ class ViLTModule(nn.Module):
         # Compute context branch if needed
         need_context_for_pooled = self.use_context_image
         need_context_for_fusion = self.use_fusion
-        last_hidden_state_context = None
-        if need_context_for_pooled or need_context_for_fusion:
-            pixel_values_c = pixel_values_context if self.use_context_image else None
-            vilt_outputs_context = self.vilt(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                token_type_ids=token_type_ids,
-                pixel_values=pixel_values_c,
-                return_dict=True
-            )
-            last_hidden_state_context = vilt_outputs_context.last_hidden_state
-
-        # Compute face branch if needed
         need_face_for_pooled = self.use_face_image
         need_face_for_fusion = self.use_fusion
+
+        need_context = need_context_for_pooled or need_context_for_fusion
+        need_face = need_face_for_pooled or need_face_for_fusion
+
+        last_hidden_state_context = None
         last_hidden_state_face = None
-        if need_face_for_pooled or need_face_for_fusion:
-            pixel_values_f = pixel_values_face if self.use_face_image else None
-            vilt_outputs_face = self.vilt(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                token_type_ids=token_type_ids,
-                pixel_values=pixel_values_f,
+
+        if need_context and need_face:
+            # Gom 2 tensor lại theo chiều batch dimension để chạy qua model 1 lần
+            combined_input_ids = torch.cat([input_ids, input_ids], dim=0)
+            combined_attention_mask = torch.cat([attention_mask, attention_mask], dim=0)
+            combined_token_type_ids = torch.cat([token_type_ids, token_type_ids], dim=0)
+            combined_pixel_values = torch.cat([pixel_values_context, pixel_values_face], dim=0)
+
+            combined_outputs = self.vilt(
+                input_ids=combined_input_ids,
+                attention_mask=combined_attention_mask,
+                token_type_ids=combined_token_type_ids,
+                pixel_values=combined_pixel_values,
                 return_dict=True
             )
+            
+            # Tách lại thành context và face representation
+            last_hidden_state_context, last_hidden_state_face = torch.split(
+                combined_outputs.last_hidden_state, batch_size, dim=0
+            )
+        elif need_context:
+            vilt_outputs_context = self.vilt(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids, pixel_values=pixel_values_context, return_dict=True)
+            last_hidden_state_context = vilt_outputs_context.last_hidden_state
+        elif need_face:
+            vilt_outputs_face = self.vilt(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids, pixel_values=pixel_values_face, return_dict=True)
             last_hidden_state_face = vilt_outputs_face.last_hidden_state
 
         # Fusion with Transformer Decoder
