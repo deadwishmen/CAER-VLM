@@ -246,3 +246,6 @@ class CAERSVLMNet(BaseModel):
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             pixel_values_context=pixel_values_context,
+            pixel_values_face=pixel_values_face,
+            labels=labels
+        )
