@@ -54,7 +54,7 @@ class ViLTModule(nn.Module):
         self.fusion_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layer_decoder)
 
         # Classifier
-        classifier_input_dim = 4 * self.vilt.config.hidden_size
+        classifier_input_dim = 3 * self.vilt.config.hidden_size
         self.classifier_head = nn.Sequential(
             nn.LayerNorm(classifier_input_dim),
             nn.Linear(classifier_input_dim, self.vilt.config.hidden_size),
@@ -140,26 +140,22 @@ class ViLTModule(nn.Module):
             cls_features_face = torch.zeros(batch_size, hidden_size, device=device)
 
         # Pooling on text features
-        text_mask_for_pool = attention_mask[:, 1:text_len]
+        text_mask_for_pool = attention_mask[:, :text_len]
         if self.use_context_image and last_hidden_state_context is not None:
-            text_hidden_state_context = last_hidden_state_context[:, 1:text_len, :]
-            pooled_features_context = self._masked_mean_pooling(text_hidden_state_context, text_mask_for_pool)
+            text_hidden_state = last_hidden_state_context[:, :text_len, :]
+            pooled_features_text = self._masked_mean_pooling(text_hidden_state, text_mask_for_pool)
+        elif self.use_face_image and last_hidden_state_face is not None:
+            text_hidden_state = last_hidden_state_face[:, :text_len, :]
+            pooled_features_text = self._masked_mean_pooling(text_hidden_state, text_mask_for_pool)
         else:
-            pooled_features_context = torch.zeros(batch_size, hidden_size, device=device)
-
-        if self.use_face_image and last_hidden_state_face is not None:
-            text_hidden_state_face = last_hidden_state_face[:, 1:text_len, :]
-            pooled_features_face = self._masked_mean_pooling(text_hidden_state_face, text_mask_for_pool)
-        else:
-            pooled_features_face = torch.zeros(batch_size, hidden_size, device=device)
+            pooled_features_text = torch.zeros(batch_size, hidden_size, device=device)
 
         # Combine features
         combined_features = torch.cat(
             (
                 cls_features_face,        # Đặc trưng [CLS] gốc của face
                 fused_cls_output,         # Đặc trưng [CLS] sau fusion
-                pooled_features_face,     # Đặc trưng pooling của văn bản face
-                pooled_features_context   # Đặc trưng pooling của văn bản context
+                pooled_features_text      # Đặc trưng pooling của văn bản
             ), 
             dim=1
         )

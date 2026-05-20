@@ -72,6 +72,8 @@ class Trainer(BaseTrainer):
             )
             loss = self.criterion(output, labels)
             loss.backward()
+            
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
             self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)

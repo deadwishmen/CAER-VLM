@@ -16,7 +16,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 np.random.seed(SEED)
 
-def load_weight(path, model, start_keys=['two_stream_net', 'fusion_net'], freeze=True):
+def load_weight(path, model, start_keys=['ViLT_model'], freeze=True):
     model_dict = model.state_dict()
     save_dict = torch.load(path)['state_dict']
 
