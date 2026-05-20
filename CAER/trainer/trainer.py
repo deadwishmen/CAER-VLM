@@ -3,6 +3,7 @@ import torch
 from torchvision.utils import make_grid
 from base import BaseTrainer
 from utils import inf_loop, MetricTracker
+from model.loss import combined_loss
 import time
 from torchvision import transforms
 
@@ -63,23 +64,38 @@ class Trainer(BaseTrainer):
 
             self.optimizer.zero_grad()
             # Gọi mô hình với các tensor từ ViltProcessor
-            output = self.model(
+            output_dict = self.model(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             token_type_ids=token_type_ids,
                             pixel_values_context=pixel_values_context,
-                            pixel_values_face=pixel_values_face
+                            pixel_values_face=pixel_values_face,
+                            labels=labels   # Thêm dòng này để update prototype
             )
-            loss = self.criterion(output, labels)
+
+            is_parallel = isinstance(self.model, torch.nn.DataParallel)
+            model_module = self.model.module if is_parallel else self.model
+
+            loss, loss_components = combined_loss(
+                output_dict, labels,
+                prototypes_face    = model_module.ViLT_model.prototypes_face,
+                prototypes_context = model_module.ViLT_model.prototypes_context,
+                lambda_face    = self.config['trainer'].get('lambda_face', 0.3),
+                lambda_context = self.config['trainer'].get('lambda_context', 0.3),
+                temperature    = self.config['trainer'].get('proto_temp', 0.07)
+            )
             loss.backward()
             
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
             self.optimizer.step()
 
             self.writer.set_step((epoch - 1) * self.len_epoch + batch_idx)
+            self.writer.add_scalar('loss/ce',         loss_components['ce'])
+            self.writer.add_scalar('loss/proto_face', loss_components['proto_face'])
+            self.writer.add_scalar('loss/proto_ctx',  loss_components['proto_ctx'])
             self.train_metrics.update('loss', loss.item())
             for met in self.metric_ftns:
-                self.train_metrics.update(met.__name__, met(output, labels))
+                self.train_metrics.update(met.__name__, met(output_dict['cat_pred'], labels))
 
             if batch_idx % self.log_step == 0:
                 self.logger.debug('Train Epoch: {} {} Loss: {:.6f}'.format(
@@ -146,13 +162,14 @@ class Trainer(BaseTrainer):
                 context_imgs = inputs.get('context')
 
                 # Gọi mô hình
-                output = self.model(
+                output_dict = self.model(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             token_type_ids=token_type_ids,
                             pixel_values_context=pixel_values_context,
                             pixel_values_face=pixel_values_face
                 )
+                output = output_dict['cat_pred']
                 loss = self.criterion(output, labels)
 
                 self.writer.set_step((epoch - 1) * len(self.valid_data_loader) + batch_idx, 'valid')
