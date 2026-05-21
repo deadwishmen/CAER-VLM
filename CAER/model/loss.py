@@ -168,8 +168,8 @@ def combined_loss(
     closs = torch.tensor(0.0, device=device)
     if use_center and centers_face is not None and centers_context is not None:
         closs = (
-            center_loss(output_dict['image_pool_face'],    labels, centers_face)
-            + center_loss(output_dict['image_pool_context'], labels, centers_context)
+            center_loss(output_dict['feat_face_raw'],    labels, centers_face)
+            + center_loss(output_dict['feat_ctx_raw'], labels, centers_context)
         ) * 0.5
 
     # ── Total ───────────────────────────────
