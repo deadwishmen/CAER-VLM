@@ -6,6 +6,7 @@ from utils import inf_loop, MetricTracker
 from model.loss import combined_loss
 import time
 from torchvision import transforms
+from tqdm import tqdm
 
 class Trainer(BaseTrainer):
     """
@@ -42,7 +43,8 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.train_metrics.reset()
         
-        for batch_idx, (inputs, labels) in enumerate(self.data_loader):
+        train_progress = tqdm(self.data_loader, desc=f'Train Epoch {epoch}', leave=False)
+        for batch_idx, (inputs, labels) in enumerate(train_progress):
             if inputs is None:  # Bỏ qua batch rỗng
                 continue
 
@@ -96,6 +98,8 @@ class Trainer(BaseTrainer):
             self.train_metrics.update('loss', loss.item())
             for met in self.metric_ftns:
                 self.train_metrics.update(met.__name__, met(output_dict['cat_pred'], labels))
+            
+            train_progress.set_postfix(loss=loss.item())
 
             if batch_idx % self.log_step == 0:
                 self.logger.debug('Train Epoch: {} {} Loss: {:.6f}'.format(
@@ -144,7 +148,8 @@ class Trainer(BaseTrainer):
         self.model.eval()
         self.valid_metrics.reset()
         with torch.no_grad():
-            for batch_idx, (inputs, labels) in enumerate(self.valid_data_loader):
+            valid_progress = tqdm(self.valid_data_loader, desc=f'Valid Epoch {epoch}', leave=False)
+            for batch_idx, (inputs, labels) in enumerate(valid_progress):
                 if inputs is None:  # Bỏ qua batch rỗng
                     continue
                 labels = labels.to(self.device)
@@ -176,6 +181,8 @@ class Trainer(BaseTrainer):
                 self.valid_metrics.update('loss', loss.item())
                 for met in self.metric_ftns:
                     self.valid_metrics.update(met.__name__, met(output, labels))
+                    
+                valid_progress.set_postfix(loss=loss.item())
 
                 # Ghi ảnh vào TensorBoard nếu có
                 # if face_imgs:
