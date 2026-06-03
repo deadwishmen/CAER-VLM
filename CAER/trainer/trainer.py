@@ -43,7 +43,7 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.train_metrics.reset()
         
-        train_progress = tqdm(self.data_loader, desc=f'Train Epoch {epoch}', leave=False)
+        train_progress = tqdm(self.data_loader, desc=f'Train Epoch {epoch}', leave=False, dynamic_ncols=True)
         for batch_idx, (inputs, labels) in enumerate(train_progress):
             if inputs is None:  # Bỏ qua batch rỗng
                 continue
@@ -102,10 +102,11 @@ class Trainer(BaseTrainer):
             train_progress.set_postfix(loss=loss.item())
 
             if batch_idx % self.log_step == 0:
-                self.logger.debug('Train Epoch: {} {} Loss: {:.6f}'.format(
-                    epoch,
-                    self._progress(batch_idx),
-                    loss.item()))
+                # Tạm vô hiệu hóa logger.debug để không chèn dòng mới làm hỏng hiển thị của tqdm
+                # self.logger.debug('Train Epoch: {} {} Loss: {:.6f}'.format(
+                #     epoch,
+                #     self._progress(batch_idx),
+                #     loss.item()))
                 # Ghi ảnh vào TensorBoard nếu có
                 # if face_imgs:
                 #     face_tensors = [transforms.ToTensor()(img) for img in face_imgs]
@@ -148,7 +149,7 @@ class Trainer(BaseTrainer):
         self.model.eval()
         self.valid_metrics.reset()
         with torch.no_grad():
-            valid_progress = tqdm(self.valid_data_loader, desc=f'Valid Epoch {epoch}', leave=False)
+            valid_progress = tqdm(self.valid_data_loader, desc=f'Valid Epoch {epoch}', leave=False, dynamic_ncols=True)
             for batch_idx, (inputs, labels) in enumerate(valid_progress):
                 if inputs is None:  # Bỏ qua batch rỗng
                     continue
