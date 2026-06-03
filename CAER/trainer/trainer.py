@@ -6,7 +6,7 @@ from utils import inf_loop, MetricTracker
 from model.loss import combined_loss
 import time
 from torchvision import transforms
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 class Trainer(BaseTrainer):
     """

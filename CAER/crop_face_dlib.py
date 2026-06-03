@@ -2,7 +2,7 @@ import os
 import argparse
 import cv2
 import dlib
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import urllib.request
 import bz2
 from parse_config import ConfigParser

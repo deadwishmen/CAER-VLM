@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import torch
 import argparse
 from parse_config import ConfigParser

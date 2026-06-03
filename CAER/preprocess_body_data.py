@@ -2,7 +2,7 @@ import os
 import argparse
 import torch
 from ultralytics import YOLO
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import shutil 
 from parse_config import ConfigParser
 
