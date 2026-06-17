@@ -1,4 +1,5 @@
 import numpy as np
+import random
 import torch
 from torchvision.utils import make_grid
 from base import BaseTrainer
@@ -7,6 +8,7 @@ from model.loss import combined_loss
 import time
 from torchvision import transforms
 from tqdm.auto import tqdm
+import sys
 
 class Trainer(BaseTrainer):
     """
@@ -32,6 +34,26 @@ class Trainer(BaseTrainer):
         self.train_metrics = MetricTracker('loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
         self.valid_metrics = MetricTracker('loss', *[m.__name__ for m in self.metric_ftns], writer=self.writer)
 
+    def _apply_modality_dropout(self, inputs, p_face=0.15, p_context=0.15, p_text=0.10):
+        """
+        Với xác suất p, zero-out một modality để model học predict từ các modality còn lại.
+        """
+        if random.random() < p_face:
+            inputs['pixel_values_face'] = torch.zeros_like(
+                inputs['pixel_values_face']
+            )
+        if random.random() < p_context:
+            inputs['pixel_values_context'] = torch.zeros_like(
+                inputs['pixel_values_context']
+            )
+        if random.random() < p_text:
+            # Zero-out chỉ input_ids, giữ attention_mask để model không bị confused về sequence length
+            # ViLT padding token id là 0
+            inputs['input_ids'] = torch.zeros_like(
+                inputs['input_ids']
+            )
+        return inputs
+
     def _train_epoch(self, epoch):
         """
         Training logic for an epoch
@@ -43,10 +65,13 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.train_metrics.reset()
         
-        train_progress = tqdm(self.data_loader, desc=f'Train Epoch {epoch}', leave=False, dynamic_ncols=True)
+        train_progress = tqdm(self.data_loader, desc=f'Train Epoch {epoch}', leave=False, ncols=100, file=sys.stdout, mininterval=2.0)
         for batch_idx, (inputs, labels) in enumerate(train_progress):
             if inputs is None:  # Bỏ qua batch rỗng
                 continue
+                
+            if self.model.training:
+                inputs = self._apply_modality_dropout(inputs)
 
             # Chuyển các tensor từ ViltProcessor sang device
             input_ids = inputs['input_ids'].to(self.device)
@@ -95,11 +120,15 @@ class Trainer(BaseTrainer):
             self.writer.add_scalar('loss/ce',         loss_components['ce'])
             self.writer.add_scalar('loss/proto_face', loss_components['proto_face'])
             self.writer.add_scalar('loss/proto_ctx',  loss_components['proto_ctx'])
+            if 'conf_face' in loss_components:
+                self.writer.add_scalar('confidence/face', loss_components['conf_face'])
+            if 'conf_ctx' in loss_components:
+                self.writer.add_scalar('confidence/ctx',  loss_components['conf_ctx'])
             self.train_metrics.update('loss', loss.item())
             for met in self.metric_ftns:
                 self.train_metrics.update(met.__name__, met(output_dict['cat_pred'], labels))
             
-            train_progress.set_postfix(loss=loss.item())
+            train_progress.set_postfix(loss=f"{loss.item():.4f}")
 
             if batch_idx % self.log_step == 0:
                 # Tạm vô hiệu hóa logger.debug để không chèn dòng mới làm hỏng hiển thị của tqdm
@@ -149,7 +178,7 @@ class Trainer(BaseTrainer):
         self.model.eval()
         self.valid_metrics.reset()
         with torch.no_grad():
-            valid_progress = tqdm(self.valid_data_loader, desc=f'Valid Epoch {epoch}', leave=False, dynamic_ncols=True)
+            valid_progress = tqdm(self.valid_data_loader, desc=f'Valid Epoch {epoch}', leave=False, ncols=100, file=sys.stdout, mininterval=2.0)
             for batch_idx, (inputs, labels) in enumerate(valid_progress):
                 if inputs is None:  # Bỏ qua batch rỗng
                     continue
@@ -183,7 +212,7 @@ class Trainer(BaseTrainer):
                 for met in self.metric_ftns:
                     self.valid_metrics.update(met.__name__, met(output, labels))
                     
-                valid_progress.set_postfix(loss=loss.item())
+                valid_progress.set_postfix(loss=f"{loss.item():.4f}")
 
                 # Ghi ảnh vào TensorBoard nếu có
                 # if face_imgs:

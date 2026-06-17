@@ -5,6 +5,47 @@ from collections import OrderedDict
 from base import BaseModel
 from transformers import ViltProcessor, ViltModel, ViltConfig
 
+class ModalityTypeEmbedding(nn.Module):
+    """
+    4 type: 0=face, 1=context, 2=fused, 3=text
+    Thêm vào feature trước khi gate/concat.
+    """
+    def __init__(self, hidden_size, num_types=4):
+        super().__init__()
+        self.embed = nn.Embedding(num_types, hidden_size)
+        nn.init.normal_(self.embed.weight, std=0.02)
+
+    def forward(self, features: list[torch.Tensor]) -> list[torch.Tensor]:
+        device = features[0].device
+        return [
+            f + self.embed(torch.tensor(i, device=device))
+            for i, f in enumerate(features)
+        ]
+
+class AdaptiveModalityGate(nn.Module):
+    """
+    Học gate score cho mỗi modality dựa trên chất lượng
+    nội tại của feature (entropy thấp = confident = gate cao hơn).
+    """
+    def __init__(self, hidden_size, num_modalities=4, dropout=0.1):
+        super().__init__()
+        self.gate_proj = nn.Sequential(
+            nn.Linear(hidden_size * num_modalities, hidden_size),
+            nn.Tanh(),
+            nn.Linear(hidden_size, num_modalities),
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, features: list[torch.Tensor]) -> torch.Tensor:
+        stacked = torch.stack(features, dim=1)       # [B, M, H]
+        concat  = stacked.flatten(1)                 # [B, M*H]
+        gates   = torch.softmax(
+            self.gate_proj(concat), dim=-1           # [B, M]
+        ).unsqueeze(-1)                              # [B, M, 1]
+
+        gated = (stacked * gates).flatten(1)         # [B, M*H]
+        return self.dropout(gated)
+
 class ViLTModule(nn.Module):
     """Module trích xuất đặc trưng sử dụng ViLT."""
     def __init__(self, vilt_model_name="dandelin/vilt-b32-mlm", num_classes=7, num_attention_heads=8, num_layer_decoder=2, dim_feedforward=1024, new_text_max_len_for_model=256, cache_dir=None, freeze_vilt_base=True, dropout_rate=0.1, use_context_image=True, use_face_image=True, use_fusion=True, prototype_momentum=0.99, prototype_temp=0.07):
@@ -52,6 +93,10 @@ class ViLTModule(nn.Module):
             batch_first=True
         )
         self.fusion_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layer_decoder)
+
+        # Gate mechanisms for robust modalities
+        self.modality_type_embed = ModalityTypeEmbedding(self.vilt.config.hidden_size, num_types=4)
+        self.modality_gate = AdaptiveModalityGate(self.vilt.config.hidden_size, num_modalities=4, dropout=dropout_rate)
 
         # Classifier
         classifier_input_dim = 4 * self.vilt.config.hidden_size
@@ -197,15 +242,14 @@ class ViLTModule(nn.Module):
             self._update_prototypes(image_pool_context, labels, self.prototypes_context)
 
         # Combine features
-        combined_features = torch.cat(
-            (
-                image_pool_face,
-                image_pool_context,
-                fused_image_output,
-                pooled_features_text
-            ), 
-            dim=1
-        )
+        features_list = [
+            image_pool_face,
+            image_pool_context,
+            fused_image_output,
+            pooled_features_text
+        ]
+        features_list = self.modality_type_embed(features_list)
+        combined_features = self.modality_gate(features_list)
 
         # Prediction
         cat_pred = self.classifier_head(combined_features)

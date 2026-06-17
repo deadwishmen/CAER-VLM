@@ -50,11 +50,23 @@ def combined_loss(output_dict, labels, prototypes_face, prototypes_context,
                   lambda_face=0.3, lambda_context=0.3,
                   temperature=0.07, margin=0.2):
     """
-    Tổng hợp CE loss + Prototype loss (có margin) từ 2 nhánh.
-    Total = CE + λ_face * ProtoLoss_face + λ_context * ProtoLoss_context
+    Tổng hợp CE loss + Prototype loss (có margin và confidence weighting).
     """
     # CE Loss trên classifier head
     ce = cross_entropy(output_dict['cat_pred'], labels)
+
+    # Tính confidence = max softmax prob của prototype sim
+    # Feature có entropy cao → uncertain → giảm weight loss
+    def modality_confidence(features, prototypes):
+        sim = F.normalize(features, dim=1) @ F.normalize(prototypes, dim=1).T
+        probs = torch.softmax(sim / temperature, dim=1)
+        entropy = -(probs * (probs + 1e-8).log()).sum(dim=1)  # [B]
+        # Confidence cao khi entropy thấp
+        conf = torch.exp(-entropy).mean()
+        return conf.detach()  # không backprop qua đây
+
+    conf_face = modality_confidence(output_dict['image_pool_face'], prototypes_face)
+    conf_ctx  = modality_confidence(output_dict['image_pool_context'], prototypes_context)
 
     # Prototype Loss nhánh face
     proto_face = prototype_loss(
@@ -68,9 +80,11 @@ def combined_loss(output_dict, labels, prototypes_face, prototypes_context,
         labels, prototypes_context, temperature, margin
     )
 
-    total = ce + lambda_face * proto_face + lambda_context * proto_ctx
+    total = ce + lambda_face * conf_face * proto_face + lambda_context * conf_ctx * proto_ctx
     return total, {
         'ce':         ce.item(),
         'proto_face': proto_face.item(),
         'proto_ctx':  proto_ctx.item(),
+        'conf_face':  conf_face.item(),
+        'conf_ctx':   conf_ctx.item(),
     }
