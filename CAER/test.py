@@ -46,13 +46,14 @@ def main(config):
             pixel_values_face = data['pixel_values_face'].to(device)
             pixel_values_context = data['pixel_values_context'].to(device)
             target = target.to(device)
-            output = model(
+            output_dict = model(
                             input_ids=input_ids,
                             attention_mask=attention_mask,
                             token_type_ids=token_type_ids,
                             pixel_values_context=pixel_values_context,
                             pixel_values_face=pixel_values_face
             )
+            output = output_dict['cat_pred']
 
             # computing loss, metrics on test set
             loss = loss_fn(output, target)
