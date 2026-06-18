@@ -1,6 +1,11 @@
 import argparse
+import os
 import torch
+import numpy as np
 from tqdm import tqdm
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 import data_loader.data_loaders as module_data
 import model.loss as module_loss
 import model.metric as module_metric
@@ -37,6 +42,9 @@ def main(config):
     total_loss = 0.0
     total_metrics = torch.zeros(len(metric_fns))
 
+    all_preds = []
+    all_targets = []
+
     with torch.no_grad():
         for i, (data, target) in enumerate(tqdm(data_loader)):
             input_ids = data['input_ids'].to(device)
@@ -55,6 +63,10 @@ def main(config):
             )
             output = output_dict['cat_pred']
 
+            preds = torch.argmax(output, dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_targets.extend(target.cpu().numpy())
+
             # computing loss, metrics on test set
             loss = loss_fn(output, target)
             batch_size = target.shape[0]
@@ -69,6 +81,29 @@ def main(config):
     })
     logger.info(log)
 
+    # Calculate and plot confusion matrix
+    cm = confusion_matrix(all_targets, all_preds)
+    cm_percent = np.zeros_like(cm, dtype=float)
+    row_sums = cm.sum(axis=1)
+    for i in range(cm.shape[0]):
+        if row_sums[i] > 0:
+            cm_percent[i] = (cm[i] / row_sums[i]) * 100
+
+    class_names = config.config.get('class_names', [str(i) for i in range(cm.shape[0])])
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm_percent, annot=True, fmt='.2f', cmap='Blues', 
+                xticklabels=class_names, yticklabels=class_names)
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+    plt.title('Confusion Matrix (%)')
+    
+    output_dir = config.log_dir
+    os.makedirs(output_dir, exist_ok=True)
+    cm_path = os.path.join(output_dir, 'confusion_matrix.png')
+    plt.savefig(cm_path, bbox_inches='tight')
+    plt.close()
+    logger.info(f"Confusion matrix saved to {cm_path}")
 
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='PyTorch Template')
